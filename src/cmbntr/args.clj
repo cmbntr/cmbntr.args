@@ -1,6 +1,10 @@
 (ns cmbntr.args
   (:import [org.apache.commons.cli Options Option GnuParser HelpFormatter]))
 
+(def ^:dynamic *opt-spec* nil)
+(def ^:dynamic *args* nil)
+(def ^:dynamic *opts* nil)
+
 (defprotocol OptSpec
   (opt-key [o])
   (opt-short-name [o])
@@ -10,7 +14,7 @@
   (opt-cardinality [o])
   (opt-type [o]))
 
-(defn- shift-and-map [shift args]
+(defn shift-and-map [shift args]
   (apply hash-map (->> args seq (drop shift))))
 
 (extend-type clojure.lang.IMapEntry
@@ -33,7 +37,7 @@
   (opt-cardinality [o]
     (if-let [args  (->> o .val (shift-and-map 2) :args)]
       (if (number? args) [0 args] args)
-      [0 1]))
+      [0 0]))
 
   (opt-type [o]
     (-> (->> o .val (shift-and-map 2))
@@ -53,17 +57,22 @@
                                 (.setType (opt-type o)))))
         options)))
 
-(defn print-usage [spec]
-  (let [o   (opts spec)
-        pw  (java.io.PrintWriter. *out*)
-        fmt (HelpFormatter.)]
-    (.printUsage fmt pw 80 "" o)
-    (.println pw)
-    (.printOptions fmt pw 80 o 2 2)))
+(defn print-usage
+  ([] (print-usage *opt-spec*))
+  ([spec]
+     (let [o   (opts spec)
+           pw  (java.io.PrintWriter. *out*)
+           fmt (HelpFormatter.)]
+       (.printUsage fmt pw 80 "" o)
+       (.println pw)
+       (.printOptions fmt pw 80 o 2 2)
+       (.flush pw))))
 
-(defn print-usage-and-exit [spec]
-  (print-usage spec)
-  (System/exit 0))
+(defn print-usage-and-exit
+  ([] (print-usage-and-exit *opt-spec*))
+  ([spec]
+     (print-usage spec)
+     (System/exit 0)))
 
 (defmulti  opt-value (fn [t _] t))
 (defmethod opt-value String [t s] s)
@@ -89,19 +98,19 @@
   (into {} (for [opt (parse spec args)]
              (let [k (keyword (.getLongOpt opt))
                    p (partial opt-value  (.getType opt))
-                   v (if (> (.getArgs opt) 1)
-                       (->> opt .getValuesList (map p) vec)
-                       (->> opt .getValue p))]
+                   v (condp = (.getArgs opt)
+                       0 true
+                       1 (->> opt .getValue p)
+                       (->> opt .getValuesList (map p) vec))]
                [k v]))))
 
-
-(def ^:dynamic *opt-spec* nil)
-(def ^:dynamic *args* nil)
-(def ^:dynamic *opts* nil)
 
 (defn opt
   ([k] (k *opts*))
   ([k default] (k *opts* default)))
+
+(defn opt? [k]
+  (or (opt k) (contains? *opts* k)))
 
 (defmacro with-opts [spec args & body]
   `(let [s# ~spec
@@ -112,21 +121,13 @@
                *opts* o#]
        ~@body)))
 
+(def common-opts
+  {:help [\h "displays this message" :action #(print-usage-and-exit)]})
 
-(comment
-  
-  (let [spec {:long-name [\l "long name argument" :args [1 4] :type Integer]
-              :num [\n "how many" :args [1 1] :type Integer]
-              :eck [\e "desc" :args 2 :type java.net.URI]
-              :boo [\b "desc boo" :args 4]
-              :verbose [\v "a bool" :args 1 :type Boolean]}
-        args  ["-b" "v1" "[ 1 2 3]" "-l" "9" "-n" "221" "-e3" "-v" "true"]]
-    
-    (with-opts spec args
-      (println *opts*)
-      (println (opt :boo))
-      (println (opt :eck))
-      (println (map class (vals *opts*)))))
-  
-  )
-
+(defmacro with-opts-dispatch [spec args & body]
+  `(let [s# ~spec]
+     (with-opts s# ~args
+       (doseq [k# (keys *opts*)]
+         (if-let [action# (->> (get s# k#) (shift-and-map 2) :action)]
+           (action#)))
+       ~@body)))
