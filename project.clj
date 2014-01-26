@@ -1,4 +1,4 @@
-(defproject cmbntr/cmbntr.args "1.1.0-SNAPSHOT"
+(defproject cmbntr/cmbntr.args "1.0.2"
   :min-lein-version "2.0.0"
 
   :description "commandline argument parsing (with commons-cli)"
